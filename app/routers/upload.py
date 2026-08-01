@@ -5,7 +5,7 @@ from fastapi import APIRouter, UploadFile, File
 # APIRouters allow us to manage multiple routes efficiently
 
 from app.models.upload_models import UploadResponse
-from app.services.data_service import read_csv_file , get_missing_values,get_basic_statistics,get_data_types,drop_missing_values,fill_missing_values,get_duplicate_count,remove_duplicates,select_columns
+from app.services.data_service import read_csv_file , get_missing_values,get_basic_statistics,get_data_types,drop_missing_values,fill_missing_values,get_duplicate_count,remove_duplicates,select_columns,generate_histogram,generate_boxplot,generate_scatterplot,generate_correlation_heatmap,generate_linechart,generate_piechart,generate_barchart
 #UploadResponse pydentic class form upload_models 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
@@ -100,3 +100,58 @@ async def select_columns_endpoint(file: UploadFile = File(...), columns: str = "
         "selected_columns": column_list,
         "preview": selected_df.head(7).to_dict(orient="records"),
     }    
+@router.post("/histogram")
+async def histogram(file: UploadFile = File(...), column: str = "Age") -> dict:
+    """Generates a histogram for the specified numeric column."""
+    df = await read_csv_file(file)
+    image_base64 = generate_histogram(df, column)
+
+    return {"column": column, "chart_base64": image_base64}    
+
+
+@router.post("/boxplot")
+async def boxplot(file: UploadFile = File(...), column: str = "Fare") -> dict:
+    """Generates a boxplot for the specified numeric column."""
+    df = await read_csv_file(file)
+    image_base64 = generate_boxplot(df, column)
+
+    return {"column": column, "chart_base64": image_base64}
+@router.post("/scatterplot")
+async def scatterplot(file: UploadFile = File(...), x_column: str = "Age", y_column: str = "Fare") -> dict:
+    """Generates a scatter plot between two numeric columns."""
+    df = await read_csv_file(file)
+    image_base64 = generate_scatterplot(df, x_column, y_column)
+
+    return {"x_column": x_column, "y_column": y_column, "chart_base64": image_base64}  
+
+@router.post("/correlation-heatmap")
+async def correlation_heatmap(file: UploadFile = File(...)) -> dict:
+    """Generates a correlation heatmap for all numeric columns in the dataset."""
+    df = await read_csv_file(file)
+    image_base64 = generate_correlation_heatmap(df)
+
+    return {"chart_base64": image_base64}
+
+
+@router.post("/piechart")
+async def piechart(file: UploadFile = File(...), column: str = "Embarked") -> dict:
+    """Generates a pie chart for a categorical column."""
+    df = await read_csv_file(file)
+    image_base64 = generate_piechart(df, column)
+    return {"column": column, "chart_base64": image_base64}
+
+
+@router.post("/barchart")
+async def barchart(file: UploadFile = File(...), column: str = "Pclass") -> dict:
+    """Generates a bar chart for a categorical column."""
+    df = await read_csv_file(file)
+    image_base64 = generate_barchart(df, column)
+    return {"column": column, "chart_base64": image_base64}
+
+
+@router.post("/linechart")
+async def linechart(file: UploadFile = File(...), column: str = "Fare") -> dict:
+    """Generates a line chart for a sorted numeric column."""
+    df = await read_csv_file(file)
+    image_base64 = generate_linechart(df, column)
+    return {"column": column, "chart_base64": image_base64}
