@@ -5,7 +5,7 @@ from fastapi import APIRouter, UploadFile, File
 # APIRouters allow us to manage multiple routes efficiently
 
 from app.models.upload_models import UploadResponse
-from app.services.data_service import read_csv_file , get_missing_values,get_basic_statistics,get_data_types,drop_missing_values,fill_missing_values,get_duplicate_count,remove_duplicates,select_columns,generate_histogram,generate_boxplot,generate_scatterplot,generate_correlation_heatmap,generate_linechart,generate_piechart,generate_barchart
+from app.services.data_service import read_csv_file , get_missing_values,get_basic_statistics,get_data_types,drop_missing_values,fill_missing_values,get_duplicate_count,remove_duplicates,select_columns,generate_histogram,generate_boxplot,generate_scatterplot,generate_correlation_heatmap,generate_linechart,generate_piechart,generate_barchart,groupby_aggregate,get_correlation_matrix,get_value_counts,get_top_n_records
 #UploadResponse pydentic class form upload_models 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
@@ -155,3 +155,44 @@ async def linechart(file: UploadFile = File(...), column: str = "Fare") -> dict:
     df = await read_csv_file(file)
     image_base64 = generate_linechart(df, column)
     return {"column": column, "chart_base64": image_base64}
+@router.post("/groupby")
+async def groupby(
+    file: UploadFile = File(...),
+    group_by_column: str = "Pclass",
+    agg_column: str = "Fare",
+    agg_function: str = "mean",
+) -> dict:
+    """Groups by one column and aggregates another using mean, sum, count, median, min, or max."""
+    df = await read_csv_file(file)
+    result = groupby_aggregate(df, group_by_column, agg_column, agg_function)
+
+    return {
+        "group_by_column": group_by_column,
+        "agg_column": agg_column,
+        "agg_function": agg_function,
+        "result": result,
+    }    
+@router.post("/correlation-matrix")
+async def correlation_matrix(file: UploadFile = File(...)) -> dict:
+    """Returns the correlation matrix for all numeric columns as raw numbers."""
+    df = await read_csv_file(file)
+    result = get_correlation_matrix(df)
+    return {"correlation_matrix": result} 
+@router.post("/value-counts")
+async def value_counts(file: UploadFile = File(...), column: str = "Embarked") -> dict:
+    """Returns the count of each unique value in a column."""
+    df = await read_csv_file(file)
+    result = get_value_counts(df, column)
+    return {"column": column, "value_counts": result} 
+@router.post("/top-records")
+async def top_records(
+    file: UploadFile = File(...),
+    column: str = "Fare",
+    n: int = 5,
+    ascending: bool = False,
+) -> dict:
+    """Returns the top N records sorted by a column (descending by default)."""
+    df = await read_csv_file(file)
+    result = get_top_n_records(df, column, n, ascending)
+
+    return {"column": column, "n": n, "ascending": ascending, "records": result}          

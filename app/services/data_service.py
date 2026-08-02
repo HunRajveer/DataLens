@@ -197,4 +197,28 @@ def generate_linechart(df, column):
 
     buffer.seek(0)
     image_base64 = base64.b64encode(buffer.read()).decode("utf-8")
-    return image_base64        
+    return image_base64  
+def groupby_aggregate(df, group_by_column, agg_column, agg_function):
+    """Groups the DataFrame by one column and aggregates another using a chosen function."""
+    valid_functions = ["mean", "sum", "count", "median", "min", "max"]
+    if agg_function not in valid_functions:
+        raise ValueError(f"agg_function must be one of {valid_functions}")
+
+    result = df.groupby(group_by_column)[agg_column].agg(agg_function)
+    return result.to_dict()
+# it works as heatmap but not in image form in numaric form , instead of giving image it provide 2D structure     
+def get_correlation_matrix(df):
+    """Returns the correlation matrix for all numeric columns as a nested dictionary."""
+    numeric_df = df.select_dtypes(include="number")
+    correlation_matrix = numeric_df.corr()
+    # .round(3) means upto three decimal point an .to_dict() bcs it have 2D form chart which should be store in JSON
+    return correlation_matrix.round(3).to_dict()
+def get_value_counts(df, column):
+    """Returns how many times each unique value appears in a column."""
+    return df[column].value_counts().to_dict() 
+
+def get_top_n_records(df, column, n, ascending=False):
+    """Returns the top N rows sorted by a column, descending by default."""
+    sorted_df = df.sort_values(by=column, ascending=ascending)
+    top_n = sorted_df.head(n)
+    return top_n.to_dict(orient="records")
