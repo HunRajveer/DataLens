@@ -222,3 +222,20 @@ def get_top_n_records(df, column, n, ascending=False):
     sorted_df = df.sort_values(by=column, ascending=ascending)
     top_n = sorted_df.head(n)
     return top_n.to_dict(orient="records")
+# till above we are feeding response in form of dict to API and it is storing in JSON form but what if someone just need clean file (CSV) not summerize content , so for that we will use this fun    
+def dataframe_to_csv_bytes(df):
+    """Converts a DataFrame into CSV bytes, ready to be sent as a file download."""
+    # unlike above buffer which used to store byte form data for image , we have text data to store , so we use StringIO()
+    buffer = io.StringIO()
+    # it exclude the indexing cols form dataframe while converting to DF to CSV formate 
+    df.to_csv(buffer, index=False)
+    # buffer.getvalue() it will create a one huge block of str which is readable to human but we need to export it via internet so we must convert it into byte formate so for that we use .encode("utf-8")
+    return buffer.getvalue().encode("utf-8") 
+# we installed openpyxl just to convert xlsx formate bcs out panda need help                 
+def dataframe_to_excel_bytes(df):
+    """Converts a DataFrame into Excel (.xlsx) bytes, ready to be sent as a file download."""
+    #Excel files are binary by nature so that's why BytesIO() not StingIO
+    buffer = io.BytesIO()
+    #engine="openpyxl" explicitly tells pandas which library to use to actually build the file , bcs pandas default support some excel engines so to avoid confusion 
+    df.to_excel(buffer, index=False, engine="openpyxl")
+    return buffer.getvalue()           

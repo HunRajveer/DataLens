@@ -3,9 +3,11 @@ from fastapi import APIRouter, UploadFile, File
 # File is a helper tool which tell to FastAPI "this piece of incoming data is a file, not normal text
 # APIRouter will allow us to create a mini version of fastAPI where we can use every properties of FastAPI 
 # APIRouters allow us to manage multiple routes efficiently
-
+import io
 from app.models.upload_models import UploadResponse
-from app.services.data_service import read_csv_file , get_missing_values,get_basic_statistics,get_data_types,drop_missing_values,fill_missing_values,get_duplicate_count,remove_duplicates,select_columns,generate_histogram,generate_boxplot,generate_scatterplot,generate_correlation_heatmap,generate_linechart,generate_piechart,generate_barchart,groupby_aggregate,get_correlation_matrix,get_value_counts,get_top_n_records
+from app.services.data_service import read_csv_file , get_missing_values,get_basic_statistics,get_data_types,drop_missing_values,fill_missing_values,get_duplicate_count,remove_duplicates,select_columns,generate_histogram,generate_boxplot,generate_scatterplot,generate_correlation_heatmap,generate_linechart,generate_piechart,generate_barchart,groupby_aggregate,get_correlation_matrix,get_value_counts,get_top_n_records,dataframe_to_csv_bytes,dataframe_to_excel_bytes
+from fastapi.responses import StreamingResponse
+#FastAPI class specifically for streaming file-like content back as a response, instead of auto-converting a dict to JSON.
 #UploadResponse pydentic class form upload_models 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
@@ -195,4 +197,30 @@ async def top_records(
     df = await read_csv_file(file)
     result = get_top_n_records(df, column, n, ascending)
 
-    return {"column": column, "n": n, "ascending": ascending, "records": result}          
+    return {"column": column, "n": n, "ascending": ascending, "records": result}
+
+
+@router.post("/export-csv")
+async def export_csv(file: UploadFile = File(...)):
+    """Exports the (optionally cleaned) dataset as a downloadable CSV file."""
+    df = await read_csv_file(file)
+    csv_bytes = dataframe_to_csv_bytes(df)
+
+# unlike using normal return which aim was to convert DICT or text into json naturally , we need somthing different(file) so for that we inform API that treat it as FILE not JSON , so we are using  StreamingResponse
+    return StreamingResponse(
+        # we are just rapping bytes into file formate so API could read line by line 
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=cleaned_data.csv"},
+    )  
+@router.post("/export-excel")
+async def export_excel(file: UploadFile = File(...)):
+    """Exports the dataset as a downloadable Excel file."""
+    df = await read_csv_file(file)
+    excel_bytes = dataframe_to_excel_bytes(df)
+
+    return StreamingResponse(
+        io.BytesIO(excel_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=cleaned_data.xlsx"},
+    )
