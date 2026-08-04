@@ -7,3 +7,4 @@ class UploadResponse(BaseModel):
     rows: int
     columns: int
     column_names: list[str]
+    dataset_id: str
