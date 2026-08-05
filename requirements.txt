@@ -6,3 +6,5 @@ seaborn
 python-multipart
 openpyxl
 pytest
+streamlit
+requests

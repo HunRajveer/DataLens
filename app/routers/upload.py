@@ -16,9 +16,24 @@ from app.core.config import logger
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
+
+# Shared helper: every endpoint below (except the upload endpoint itself) calls this
+# instead of read_csv_file(file) directly. This was the actual bug — several endpoints
+# were calling read_csv_file(file) directly, and file is None when Streamlit only sends
+# a dataset_id, causing "AttributeError: 'NoneType' object has no attribute 'read'".
+async def resolve_dataframe(file: UploadFile, dataset_id: str):
+    """Gets a DataFrame from either a fresh file upload or a stored dataset_id."""
+    if dataset_id:
+        return get_dataset(dataset_id)
+    elif file:
+        return await read_csv_file(file)
+    else:
+        raise HTTPException(status_code=400, detail="Provide either a file or a dataset_id")
+
+
 #Before sending a response back to the user, check that it actually matches the UploadResponse shape.
 @router.post("/", response_model=UploadResponse)
-async def upload_csv(file: UploadFile = File(None), dataset_id: str = None) -> UploadResponse:
+async def upload_csv(file: UploadFile = File(...)) -> UploadResponse:
     """Receives a CSV, reads it into a DataFrame, stores it, and returns basic info plus a dataset ID."""
     df = await read_csv_file(file)
     dataset_id = save_dataset(df)
@@ -32,52 +47,49 @@ async def upload_csv(file: UploadFile = File(None), dataset_id: str = None) -> U
         column_names=df.columns.tolist(),
         dataset_id=dataset_id,
     )
+
+
 @router.post("/missing-values")
 async def missing_values(
     file: UploadFile = File(None), # means optional to give new file again and again 
     dataset_id: str = None,
 ) -> dict[str, int]:
     """Returns how many missing values exist in each column. Accepts either a file upload or a dataset_id."""
-    # if file id is given then fatch it from storage.py 
-    if dataset_id:
-        df = get_dataset(dataset_id)
-    # if id is not given then just read a file     
-    elif file:
-        df = await read_csv_file(file)
-    else:
-        raise HTTPException(status_code=400, detail="Provide either a file or a dataset_id")
-
+    df = await resolve_dataframe(file, dataset_id)
     result = get_missing_values(df)
     return result
 
+
 @router.post("/data-types")
-async def data_types(file: UploadFile = File(None), dataset_id: str = None) -> dict[str, str]:
-    """Returns the data type of each column in the uploaded CSV."""
-    df = await read_csv_file(file)
+async def data_types(file: UploadFile = File(None), dataset_id: str = None) -> dict:
+    df = await resolve_dataframe(file, dataset_id)
     return get_data_types(df)
 
 
 @router.post("/statistics")
 async def statistics(file: UploadFile = File(None), dataset_id: str = None) -> dict:
     """Returns basic statistics for numeric columns in the uploaded CSV."""
-    df = await read_csv_file(file)
-    return get_basic_statistics(df)   
+    df = await resolve_dataframe(file, dataset_id)
+    return get_basic_statistics(df)
+
 
 # column: str | None = None means "this can either be text, or nothing at all." = None sets the default, so if the user doesn't specify a column, this stays None
 @router.post("/drop-missing")
 async def drop_missing(file: UploadFile = File(None), dataset_id: str = None, column: str | None = None) -> dict:
     """Drops rows with missing values, optionally limited to one column."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     cleaned_df = drop_missing_values(df, column)
     return {
         "original_rows": df.shape[0],
         "remaining_rows": cleaned_df.shape[0],
         "rows_dropped": df.shape[0] - cleaned_df.shape[0],
     }
+
+
 @router.post("/fill-missing")
 async def fill_missing(file: UploadFile = File(None), dataset_id: str = None, column: str = "Age", strategy: str = "mean") -> dict:
     """Fills missing values in a column using mean, median, or mode."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     # check missing cols 
     missing_before = df[column].isnull().sum()
     # fill them 
@@ -90,13 +102,15 @@ async def fill_missing(file: UploadFile = File(None), dataset_id: str = None, co
         "strategy": strategy,
         "missing_before": int(missing_before),
         "missing_after": int(missing_after),
-    }    
+    }
+
+
 #columns: str | None = None — a query parameter, but notice it's a single string, not natively a list. Swagger query strings don't easily support lists, so we accept comma-separated text instead (e.g., Name,Age,Fare) and split it ourselves.
 @router.post("/duplicates")
 async def duplicates(file: UploadFile = File(None), dataset_id: str = None, columns: str | None = None) -> dict:
     """Reports how many duplicate rows exist and how many remain after removing them.
     Optionally pass a comma-separated list of columns to check, e.g. Name,Age,Fare."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
 
     subset = columns.split(",") if columns else None
 
@@ -109,11 +123,13 @@ async def duplicates(file: UploadFile = File(None), dataset_id: str = None, colu
         "remaining_rows": cleaned_df.shape[0],
         "checked_columns": subset if subset else "all columns",
     }
-#The problem: JSON (what your API sends back) doesn't understand "spreadsheets." JSON only understands things like lists [ ] and dictionaries { }. So we need to convert this table into one of those shapes — and .to_dict() is the tool for that conversion. But here's the catch: there's more than one way to convert a table into a dictionary, depending on what structure you want. That's exactly what orient controls — it's telling pandas how to reshape the table.    
+
+
+#The problem: JSON (what your API sends back) doesn't understand "spreadsheets." JSON only understands things like lists [ ] and dictionaries { }. So we need to convert this table into one of those shapes — and .to_dict() is the tool for that conversion. But here's the catch: there's more than one way to convert a table into a dictionary, depending on what structure you want. That's exactly what orient controls — it's telling pandas how to reshape the table.
 @router.post("/select-columns")
 async def select_columns_endpoint(file: UploadFile = File(None), dataset_id: str = None, columns: str = "") -> dict:
     """Returns a preview of the dataset limited to the specified comma-separated columns."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     column_list = columns.split(",")
 
     selected_df = select_columns(df, column_list)
@@ -121,35 +137,40 @@ async def select_columns_endpoint(file: UploadFile = File(None), dataset_id: str
     return {
         "selected_columns": column_list,
         "preview": selected_df.head(7).to_dict(orient="records"),
-    }    
+    }
+
+
 @router.post("/histogram")
 async def histogram(file: UploadFile = File(None), dataset_id: str = None, column: str = "Age") -> dict:
     """Generates a histogram for the specified numeric column."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     image_base64 = generate_histogram(df, column)
 
-    return {"column": column, "chart_base64": image_base64}    
+    return {"column": column, "chart_base64": image_base64}
 
 
 @router.post("/boxplot")
 async def boxplot(file: UploadFile = File(None), dataset_id: str = None, column: str = "Fare") -> dict:
     """Generates a boxplot for the specified numeric column."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     image_base64 = generate_boxplot(df, column)
 
     return {"column": column, "chart_base64": image_base64}
+
+
 @router.post("/scatterplot")
 async def scatterplot(file: UploadFile = File(None), dataset_id: str = None, x_column: str = "Age", y_column: str = "Fare") -> dict:
     """Generates a scatter plot between two numeric columns."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     image_base64 = generate_scatterplot(df, x_column, y_column)
 
-    return {"x_column": x_column, "y_column": y_column, "chart_base64": image_base64}  
+    return {"x_column": x_column, "y_column": y_column, "chart_base64": image_base64}
+
 
 @router.post("/correlation-heatmap")
 async def correlation_heatmap(file: UploadFile = File(None), dataset_id: str = None) -> dict:
     """Generates a correlation heatmap for all numeric columns in the dataset."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     image_base64 = generate_correlation_heatmap(df)
 
     return {"chart_base64": image_base64}
@@ -158,7 +179,7 @@ async def correlation_heatmap(file: UploadFile = File(None), dataset_id: str = N
 @router.post("/piechart")
 async def piechart(file: UploadFile = File(None), dataset_id: str = None, column: str = "Embarked") -> dict:
     """Generates a pie chart for a categorical column."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     image_base64 = generate_piechart(df, column)
     return {"column": column, "chart_base64": image_base64}
 
@@ -166,7 +187,7 @@ async def piechart(file: UploadFile = File(None), dataset_id: str = None, column
 @router.post("/barchart")
 async def barchart(file: UploadFile = File(None), dataset_id: str = None, column: str = "Pclass") -> dict:
     """Generates a bar chart for a categorical column."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     image_base64 = generate_barchart(df, column)
     return {"column": column, "chart_base64": image_base64}
 
@@ -174,9 +195,11 @@ async def barchart(file: UploadFile = File(None), dataset_id: str = None, column
 @router.post("/linechart")
 async def linechart(file: UploadFile = File(None), dataset_id: str = None, column: str = "Fare") -> dict:
     """Generates a line chart for a sorted numeric column."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     image_base64 = generate_linechart(df, column)
     return {"column": column, "chart_base64": image_base64}
+
+
 @router.post("/groupby")
 async def groupby(
     file: UploadFile = File(None), dataset_id: str = None,
@@ -185,7 +208,7 @@ async def groupby(
     agg_function: str = "mean",
 ) -> dict:
     """Groups by one column and aggregates another using mean, sum, count, median, min, or max."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     result = groupby_aggregate(df, group_by_column, agg_column, agg_function)
 
     return {
@@ -193,19 +216,25 @@ async def groupby(
         "agg_column": agg_column,
         "agg_function": agg_function,
         "result": result,
-    }    
+    }
+
+
 @router.post("/correlation-matrix")
 async def correlation_matrix(file: UploadFile = File(None), dataset_id: str = None) -> dict:
     """Returns the correlation matrix for all numeric columns as raw numbers."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     result = get_correlation_matrix(df)
-    return {"correlation_matrix": result} 
+    return {"correlation_matrix": result}
+
+
 @router.post("/value-counts")
 async def value_counts(file: UploadFile = File(None), dataset_id: str = None, column: str = "Embarked") -> dict:
     """Returns the count of each unique value in a column."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     result = get_value_counts(df, column)
-    return {"column": column, "value_counts": result} 
+    return {"column": column, "value_counts": result}
+
+
 @router.post("/top-records")
 async def top_records(
     file: UploadFile = File(None), dataset_id: str = None,
@@ -214,7 +243,7 @@ async def top_records(
     ascending: bool = False,
 ) -> dict:
     """Returns the top N records sorted by a column (descending by default)."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     result = get_top_n_records(df, column, n, ascending)
 
     return {"column": column, "n": n, "ascending": ascending, "records": result}
@@ -223,7 +252,7 @@ async def top_records(
 @router.post("/export-csv")
 async def export_csv(file: UploadFile = File(None), dataset_id: str = None):
     """Exports the (optionally cleaned) dataset as a downloadable CSV file."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     csv_bytes = dataframe_to_csv_bytes(df)
     logger.info(f"CSV export requested for dataset_id={dataset_id}")
 # unlike using normal return which aim was to convert DICT or text into json naturally , we need somthing different(file) so for that we inform API that treat it as FILE not JSON , so we are using  StreamingResponse
@@ -232,11 +261,13 @@ async def export_csv(file: UploadFile = File(None), dataset_id: str = None):
         io.BytesIO(csv_bytes),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=cleaned_data.csv"},
-    )  
+    )
+
+
 @router.post("/export-excel")
 async def export_excel(file: UploadFile = File(None), dataset_id: str = None):
     """Exports the dataset as a downloadable Excel file."""
-    df = await read_csv_file(file)
+    df = await resolve_dataframe(file, dataset_id)
     excel_bytes = dataframe_to_excel_bytes(df)
 
     return StreamingResponse(
@@ -244,7 +275,3 @@ async def export_excel(file: UploadFile = File(None), dataset_id: str = None):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=cleaned_data.xlsx"},
     )
-
-
-     
-
